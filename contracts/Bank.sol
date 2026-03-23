@@ -21,4 +21,13 @@ contract Bank {
         (bool success, ) = payable(msg.sender).call{value: amount}("");
         require(success, "Transfer failed");
     }
+
+    function transferFunds(address to, uint256 amount) public {
+        require(to != address(0), "Cannot transfer to zero address");
+        require(amount > 0, "Transfer amount must be greater than zero.");
+        require(to != msg.sender, "We need 2 different wallets");
+        require(accountBalances[msg.sender] >= amount, "Insufficient balance");
+        accountBalances[msg.sender] -= amount;
+        accountBalances[to] += amount;
+    }
 }
