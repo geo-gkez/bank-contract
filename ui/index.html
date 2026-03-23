@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simple Bank</title>
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6/dist/ethers.umd.min.js"></script>
+
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 600px;
+      margin: 40px auto;
+      padding: 0 20px;
+      background: #f5f5f5;
+    }
+    h1 { color: #333; }
+    h2 { font-size: 1rem; margin-bottom: 6px; color: #555; }
+    section {
+      background: white;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    input {
+      padding: 8px;
+      margin-right: 8px;
+      margin-bottom: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      width: 200px;
+    }
+    button {
+      padding: 8px 16px;
+      background: #4f46e5;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover { background: #4338ca; }
+    button:disabled { background: #aaa; cursor: not-allowed; }
+    .account { font-size: 0.85rem; color: #666; word-break: break-all; }
+    .balance { font-size: 1.4rem; font-weight: bold; color: #333; margin: 4px 0; }
+    .status {
+      padding: 10px;
+      border-radius: 4px;
+      background: #e0f2fe;
+      color: #0369a1;
+      font-size: 0.9rem;
+    }
+    .status.error { background: #fee2e2; color: #dc2626; }
+    ul { list-style: none; padding: 0; margin: 8px 0 0; }
+    li { padding: 4px 0; font-size: 0.9rem; color: #444; border-bottom: 1px solid #eee; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <h1>Simple Bank</h1>
+
+    <!-- Not connected -->
+    <section v-if="!connected">
+      <p>Connect your MetaMask wallet to get started.</p>
+      <button @click="connect">Connect MetaMask</button>
+    </section>
+
+    <!-- Connected -->
+    <template v-else>
+
+      <!-- Account info -->
+      <section>
+        <h2>Account</h2>
+        <p class="account">{{ account }}</p>
+        <p class="balance">{{ balance }} ETH</p>
+        <button @click="updateBalance">Refresh Balance</button>
+      </section>
+
+      <!-- Deposit -->
+      <section>
+        <h2>Deposit</h2>
+        <input v-model="depositAmount" type="number" placeholder="ETH amount" min="0" step="0.01" />
+        <button @click="deposit" :disabled="busy">Deposit</button>
+      </section>
+
+      <!-- Withdraw -->
+      <section>
+        <h2>Withdraw</h2>
+        <input v-model="withdrawAmount" type="number" placeholder="ETH amount" min="0" step="0.01" />
+        <button @click="withdraw" :disabled="busy">Withdraw</button>
+      </section>
+
+      <!-- Transfer -->
+      <section>
+        <h2>Transfer</h2>
+        <input v-model="transferTo" type="text" placeholder="Recipient address (0x...)" />
+        <input v-model="transferAmount" type="number" placeholder="ETH amount" min="0" step="0.01" />
+        <button @click="transfer" :disabled="busy">Transfer</button>
+      </section>
+
+      <!-- Transaction history -->
+      <section>
+        <h2>Transaction History</h2>
+        <button @click="getHistory" :disabled="busy">Load History</button>
+        <ul v-if="history.length > 0">
+          <li v-for="entry in history" :key="entry.block">
+            Block {{ entry.block }} — {{ entry.fn }}
+            <span v-if="entry.args"> ({{ entry.args }})</span>
+          </li>
+        </ul>
+        <p v-else-if="historyLoaded" style="color:#888; font-size:0.9rem;">No transactions found.</p>
+      </section>
+
+      <!-- Status -->
+      <div v-if="status" :class="['status', isError ? 'error' : '']">{{ status }}</div>
+
+    </template>
+  </div>
+
+  <script>
+    const { createApp, ref } = Vue;
+
+    const CONTRACT_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+
+    const ABI = [
+      "function depositFunds() payable",
+      "function withdrawFunds(uint256 amount)",
+      "function transferFunds(address to, uint256 amount)",
+      "function getBalance() view returns (uint256)",
+      "function getTransactionHistory() view returns (uint256[])",
+    ];
+
+    createApp({
+      setup() {
+        const connected     = ref(false);
+        const account       = ref("");
+        const balance       = ref("0.0");
+        const depositAmount = ref("");
+        const withdrawAmount= ref("");
+        const transferTo    = ref("");
+        const transferAmount= ref("");
+        const history       = ref([]);
+        const historyLoaded = ref(false);
+        const status        = ref("");
+        const isError       = ref(false);
+        const busy          = ref(false);
+
+        let bank;
+        let provider;
+
+        // ── helpers ────────────────────────────────────────────────
+        function setStatus(msg, error = false) {
+          status.value = msg;
+          isError.value = error;
+        }
+
+        async function updateBalance() {
+          const bal = await bank.getBalance();
+          balance.value = ethers.formatEther(bal);
+        }
+
+        // ── connect MetaMask ───────────────────────────────────────
+        async function connect() {
+          if (!window.ethereum) {
+            setStatus("MetaMask not found — please install it.", true);
+            return;
+          }
+          try {
+            provider = new ethers.BrowserProvider(window.ethereum);
+            await provider.send("eth_requestAccounts", []);
+            const signer = await provider.getSigner();
+            bank = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+            account.value = await signer.getAddress();
+            connected.value = true;
+            await updateBalance();
+            setStatus("Connected successfully.");
+          } catch (e) {
+            setStatus("Connection failed: " + e.message, true);
+          }
+        }
+
+        // ── deposit ────────────────────────────────────────────────
+        async function deposit() {
+          if (!depositAmount.value) return;
+          try {
+            busy.value = true;
+            setStatus("Waiting for MetaMask confirmation...");
+            const tx = await bank.depositFunds({
+              value: ethers.parseEther(depositAmount.value.toString()),
+            });
+            setStatus("Transaction submitted — waiting for confirmation...");
+            await tx.wait();
+            await updateBalance();
+            setStatus(`Deposited ${depositAmount.value} ETH.`);
+            depositAmount.value = "";
+          } catch (e) {
+            setStatus("Deposit failed: " + e.message, true);
+          } finally {
+            busy.value = false;
+          }
+        }
+
+        // ── withdraw ───────────────────────────────────────────────
+        async function withdraw() {
+          if (!withdrawAmount.value) return;
+          try {
+            busy.value = true;
+            setStatus("Waiting for MetaMask confirmation...");
+            const tx = await bank.withdrawFunds(
+              ethers.parseEther(withdrawAmount.value.toString())
+            );
+            setStatus("Transaction submitted — waiting for confirmation...");
+            await tx.wait();
+            await updateBalance();
+            setStatus(`Withdrawn ${withdrawAmount.value} ETH.`);
+            withdrawAmount.value = "";
+          } catch (e) {
+            setStatus("Withdrawal failed: " + e.message, true);
+          } finally {
+            busy.value = false;
+          }
+        }
+
+        // ── transfer ───────────────────────────────────────────────
+        async function transfer() {
+          if (!transferTo.value || !transferAmount.value) return;
+          try {
+            busy.value = true;
+            setStatus("Waiting for MetaMask confirmation...");
+            const tx = await bank.transferFunds(
+              transferTo.value,
+              ethers.parseEther(transferAmount.value.toString())
+            );
+            setStatus("Transaction submitted — waiting for confirmation...");
+            await tx.wait();
+            await updateBalance();
+            setStatus(`Transferred ${transferAmount.value} ETH to ${transferTo.value}.`);
+            transferTo.value = "";
+            transferAmount.value = "";
+          } catch (e) {
+            setStatus("Transfer failed: " + e.message, true);
+          } finally {
+            busy.value = false;
+          }
+        }
+
+        // ── history ────────────────────────────────────────────────
+        async function getHistory() {
+          try {
+            busy.value = true;
+            historyLoaded.value = false;
+            const blocks = await bank.getTransactionHistory();
+            const entries = [];
+
+            for (const blockNum of blocks) {
+              const block = await provider.getBlock(blockNum);
+              if (!block) continue;
+              for (const txHash of block.transactions) {
+                const tx = await provider.getTransaction(txHash);
+                if (!tx) continue;
+                const decoded = bank.interface.parseTransaction({
+                  data: tx.data,
+                  value: tx.value,
+                });
+                let args = "";
+                if (decoded?.name === "withdrawFunds") {
+                  args = ethers.formatEther(decoded.args[0]) + " ETH";
+                } else if (decoded?.name === "transferFunds") {
+                  args = `${decoded.args[0].slice(0, 8)}... · ${ethers.formatEther(decoded.args[1])} ETH`;
+                } else if (decoded?.name === "depositFunds") {
+                  args = ethers.formatEther(tx.value) + " ETH";
+                }
+                entries.push({ block: blockNum.toString(), fn: decoded?.name ?? "unknown", args });
+              }
+            }
+
+            history.value = entries;
+            historyLoaded.value = true;
+            setStatus(`Loaded ${entries.length} transaction(s).`);
+          } catch (e) {
+            setStatus("Failed to load history: " + e.message, true);
+          } finally {
+            busy.value = false;
+          }
+        }
+
+        return {
+          connected, account, balance,
+          depositAmount, withdrawAmount, transferTo, transferAmount,
+          history, historyLoaded, status, isError, busy,
+          connect, deposit, withdraw, transfer, getHistory, updateBalance,
+        };
+      },
+    }).mount("#app");
+  </script>
+</body>
+</html>
