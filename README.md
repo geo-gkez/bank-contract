@@ -5,7 +5,7 @@ A Solidity development environment running inside Docker, accessed via VS Code D
 ## Project Structure
 
 ```
-first-app/
+bank-contract/
 ├── .devcontainer/
 │   └── devcontainer.json   ← VS Code Dev Container config
 ├── Dockerfile.dev          ← Node 24 image with dev tools
@@ -32,7 +32,7 @@ first-app/
 
 ## Setup
 
-1. Open the `first-app/` folder in VS Code
+1. Open the `bank-contract/` folder in VS Code
 2. Open the command palette (`Ctrl+Shift+P`) and run:
    ```
    Dev Containers: Reopen in Container
