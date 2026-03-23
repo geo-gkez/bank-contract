@@ -35,6 +35,25 @@ async function main() {
   // Transfer 0.1 ETH to user1
   await bank.transferFunds(user1.address, ethers.parseEther("0.1"));
   console.log("Transferred 0.1 ETH to user1:", user1.address);
+
+  // Get transaction history
+  const history = await bank.getTransactionHistory();
+  console.log("Transaction history (block numbers):", history);
+
+  for (const blockNumber of history) {
+    const block = await ethers.provider.getBlock(blockNumber);
+    if (!block) continue;
+
+    for (const txHash of block.transactions) {
+      const tx = await ethers.provider.getTransaction(txHash);
+      const decoded = bank.interface.parseTransaction({
+        data: tx!.data,
+        value: tx!.value,
+      });
+      console.log(`Block ${blockNumber} - Function: ${decoded?.name}`);
+      console.log("  Args:", decoded?.args);
+    }
+  }
 }
 
 main().catch(console.error);
